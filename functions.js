@@ -19,7 +19,7 @@ module.exports = {
   test: function () {
     var a = 1;
     let b = 2;
-    return a + b + c;
+    return a + b + c + this.d;
   }
 };
 
@@ -28,15 +28,19 @@ module.exports = {
   // from module this variable should be stored to global object or exported
   // from module.
   const {result: {objectId}} = await protocol.Runtime.evaluate({
-    expression: `require('./functions.js').test`,
+    expression: `require('./functions.js').test.bind({d:1}, 1)`,
     // this flag is important, in Node.js environment it injects 'require'
     // method in addition to different command line APIs.
     includeCommandLineAPI: true
   });
+  // dump bound arguments and bound this remote objects.
+  console.log(await boundProperties(objectId));
+
+  const targetFunctionId = await targetFunction(objectId);
   const {internalProperties} = await protocol.Runtime.getProperties({
-    objectId, ownProperties: true
+    objectId: targetFunctionId, ownProperties: true
   });
-  // console.log(internalProperties);
+  console.log(internalProperties);
   const {value: {value: location}} = internalProperties.find(prop =>
       prop.name === '[[FunctionLocation]]');
   // returns scriptId, lineNumber and columnNumber
@@ -62,4 +66,32 @@ module.exports = {
     }
     console.log('---');
   }
+  // console.log(internalProperties);
 })()
+
+async function targetFunction(functionObjectId) {
+  while (true) {
+    const {internalProperties} = await protocol.Runtime.getProperties({
+      objectId: functionObjectId,
+      ownProperties: true
+    });
+    const targetFunction = internalProperties.find(prop => prop.name === '[[TargetFunction]]');
+    if (!targetFunction)
+      break;
+    functionObjectId = targetFunction.value.objectId;
+  }
+  return functionObjectId;
+}
+
+async function boundProperties(functionObjectId) {
+  const {internalProperties} = await protocol.Runtime.getProperties({
+    objectId: functionObjectId,
+    ownProperties: true
+  });
+  const boundThis = internalProperties.find(p => p.name === '[[BoundThis]]');
+  const boundArgs = internalProperties.find(p => p.name === '[[BoundArgs]]');
+  return {
+    boundThis: boundThis ? boundThis.value : undefined,
+    boundArgs: boundArgs ? boundArgs.value : undefined
+  }
+}
